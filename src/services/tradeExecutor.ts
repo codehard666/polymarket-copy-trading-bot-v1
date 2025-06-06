@@ -77,7 +77,7 @@ const doTrading = async (clobClient: ClobClient) => {
             
             // Optional: Scale trade amount based on balance ratio
             if (my_balance < user_balance) {
-                const balanceRatio = my_balance / user_balance;
+                const balanceRatio = (my_balance * 100) / user_balance;
                 tradeAmount = tradeAmount * balanceRatio;
                 console.log(`⚖️ Scaling trade amount by balance ratio: ${balanceRatio.toFixed(3)}`);
             }

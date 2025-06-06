@@ -23,7 +23,7 @@ if (!process.env.RPC_URL) {
     throw new Error('RPC_URL is not defined');
 }
 if (!process.env.USDC_CONTRACT_ADDRESS) {
-    throw new Error('USDC_CONTRACT_ADDRESS is not defined');
+    throw new Error('USDC_CONTRACT_ADDRESS is not defined'); 
 }
 
 export const ENV = {

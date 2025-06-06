@@ -16,8 +16,7 @@ const createClobClient = async (): Promise<ClobClient> => {
         chainId,
         wallet,
         undefined,
-        SignatureType.POLY_PROXY,
-        PROXY_WALLET as string
+        SignatureType.EOA
     );
 
     const originalConsoleError = console.error;
@@ -36,8 +35,7 @@ const createClobClient = async (): Promise<ClobClient> => {
         chainId,
         wallet,
         creds,
-        SignatureType.POLY_PROXY,
-        PROXY_WALLET as string
+        SignatureType.EOA
     );
     console.log(clobClient);
     return clobClient;
