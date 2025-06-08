@@ -11,6 +11,7 @@ const PROXY_WALLET = ENV.PROXY_WALLET;
 // Check for command line arguments
 const args = process.argv.slice(2);
 const shouldSellAll = args.includes('sell_all');
+const shouldClaimAll = args.includes('claim_all');
 
 export const main = async () => {
     await connectDB();
@@ -21,8 +22,8 @@ export const main = async () => {
     // Start monitoring user's transactions
     tradeMonitor();
     
-    // Execute transactions on your wallet with the sell_all flag if provided
-    tradeExecutor(clobClient, shouldSellAll);
+    // Execute transactions on your wallet with the sell_all or claim_all flag if provided
+    tradeExecutor(clobClient, shouldSellAll, shouldClaimAll);
     
     // test(clobClient);
 };

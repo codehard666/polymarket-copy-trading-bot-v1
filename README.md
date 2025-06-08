@@ -1,3 +1,14 @@
+node approve-usdc.js force
+node approve-polymarket-nfts.js
+node check-allowance.js 
+node check-trading-setup.js 
+npm run build
+npm run start
+npm run start:sell-all
+npm run start:claim-all
+
+
+
 # Polymarket Copy Trading Bot
 
 ## Introduction

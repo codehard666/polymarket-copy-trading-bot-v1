@@ -9,8 +9,6 @@ import getMyBalance from '../utils/getMyBalance';
 import postOrder from '../utils/postOrder';
 import { ethers } from 'ethers';
 import { checkAllowance as fetchRpcAllowance, clearAllowanceCache } from '../utils/rpcHelper';
-import closePosition from '../utils/closePosition';
-import claimWithClobApi from './claimPositions';
 import createRpcProvider from '../utils/createRpcProvider';
 
 const USER_ADDRESS = ENV.USER_ADDRESS;
@@ -155,8 +153,7 @@ const doTrading = async (clobClient: ClobClient) => {
             }
             
             // Ensure we have enough balance
-            if (tradeAmount > my_balance * 0.95) // Keep 5% buffer
-            {
+            if (tradeAmount > my_balance * 0.95) { // Keep 5% buffer
                 tradeAmount = my_balance * 0.9; // Use 90% of balance
                 console.log(`⚠️ Adjusting trade amount to ${tradeAmount.toFixed(6)} USDC (90% of balance)`);
             }
@@ -341,11 +338,108 @@ const liquidateAllPositions = async (clobClient: ClobClient) => {
     }
 };
 
-// Add a function to claim all redeemable positions
+// Fix the claimAllPositions function to handle the "network does not support ENS" error
+// by using a more direct and simple approach to create an ethereum contract
+// without ENS resolution that fails on Polygon
 const claimAllPositions = async (clobClient: ClobClient) => {
     try {
-        // Use the dedicated claim positions module that handles both CLOB API and direct contract methods
-        await claimWithClobApi(clobClient);
+        console.log('🔍 Fetching all claimable positions for your wallet...');
+        
+        // Get current positions
+        const my_positions: UserPositionInterface[] = await fetchData(
+            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+        );
+        
+        if (!my_positions || my_positions.length === 0) {
+            console.log('ℹ️ No positions found to claim.');
+            return;
+        }
+        
+        // Filter for positions that are redeemable (resolved markets with winning positions)
+        const redeemablePositions = my_positions.filter(pos => pos.redeemable === true);
+        
+        if (redeemablePositions.length === 0) {
+            console.log('ℹ️ No redeemable positions found. All your markets may still be active or you have no winning positions.');
+            return;
+        }
+        
+        console.log(`🎯 Found ${redeemablePositions.length} redeemable positions to claim:`);
+        redeemablePositions.forEach((pos, index) => {
+            console.log(`  ${index + 1}. ${pos.title || pos.conditionId} - ${pos.size} tokens, Asset: ${pos.asset}`);
+        });
+        
+        // Create provider but do NOT use ENS (which isn't supported on Polygon)
+        console.log('🔄 Setting up wallet and provider...');
+        const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        
+        // Create wallet directly with private key first
+        const wallet = new ethers.Wallet(PRIVATE_KEY);
+        // Then connect to provider after wallet is created to avoid ENS lookups
+        const connectedWallet = wallet.connect(provider);
+        
+        console.log(`📍 Wallet address: ${connectedWallet.address}`);
+        console.log(`🏪 Exchange contract: ${POLYMARKET_EXCHANGE_ADDRESS}`);
+        
+        // CTF Exchange ABI (minimal for redeem function)
+        const CTF_ABI = [
+            'function redeem(address _tokenAddress, uint256 _amount) external'
+        ];
+        
+        const ctfExchange = new ethers.Contract(
+            POLYMARKET_EXCHANGE_ADDRESS, 
+            CTF_ABI, 
+            connectedWallet
+        );
+        
+        // Gas settings
+        const maxPriorityFeePerGas = ethers.utils.parseUnits(DEFAULT_MAX_PRIORITY_FEE, 'gwei');
+        const maxFeePerGas = ethers.utils.parseUnits(DEFAULT_MAX_FEE, 'gwei');
+        
+        console.log(`⛽ Gas settings: Max Priority Fee: ${ethers.utils.formatUnits(maxPriorityFeePerGas, 'gwei')} GWEI, Max Fee: ${ethers.utils.formatUnits(maxFeePerGas, 'gwei')} GWEI`);
+        
+        // Claim each position
+        for (const position of redeemablePositions) {
+            try {
+                console.log(`\n🔄 Claiming position for market: ${position.title || position.conditionId}`);
+                console.log(`   Token: ${position.asset}`);
+                console.log(`   Amount: ${position.size} tokens`);
+                
+                // Convert size to an integer by rounding down to avoid any decimal issues
+                // The smart contract expects a plain integer with no decimals
+                const sizeAsInteger = Math.floor(position.size);
+                console.log(`   Amount (integer only): ${sizeAsInteger} tokens`);
+                
+                // Create amount without decimals using String conversion to avoid decimal issues
+                const amount = ethers.BigNumber.from(sizeAsInteger);
+                
+                // Submit redemption transaction
+                const tx = await ctfExchange.redeem(
+                    position.asset, 
+                    amount,
+                    {
+                        maxPriorityFeePerGas,
+                        maxFeePerGas
+                    }
+                );
+                
+                console.log(`📤 Transaction hash: ${tx.hash}`);
+                console.log('⏳ Waiting for confirmation...');
+                
+                const receipt = await tx.wait();
+                console.log(`✅ Transaction confirmed in block ${receipt.blockNumber}`);
+                console.log(`💰 Successfully claimed position!`);
+                
+            } catch (error) {
+                console.error(`❌ Error claiming position for ${position.title || position.conditionId}:`, error);
+                console.log('⚠️ Continuing with next position...');
+            }
+            
+            // Add a small delay between transactions
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+        console.log('\n🎉 Claim all process completed!');
+        
     } catch (error) {
         console.error('❌ Error in claimAllPositions:', error);
         console.log('⚠️ Continuing with regular trading despite claiming errors...');

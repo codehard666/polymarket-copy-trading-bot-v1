@@ -1,0 +1,115 @@
+import { ClobClient } from '@polymarket/clob-client';
+import { UserPositionInterface } from '../interfaces/User';
+import { ethers } from 'ethers';
+import { ENV } from '../config/env';
+import fetchData from '../utils/fetchData';
+import createRpcProvider from '../utils/createRpcProvider';
+
+const PROXY_WALLET = ENV.PROXY_WALLET;
+const POLYMARKET_EXCHANGE_ADDRESS = '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'; // CTF Exchange
+const PRIVATE_KEY = ENV.PRIVATE_KEY;
+const RPC_URL = ENV.RPC_URL;
+const DEFAULT_MAX_PRIORITY_FEE = '30'; // Default gas settings
+const DEFAULT_MAX_FEE = '100';
+
+/**
+ * Claims all redeemable positions using direct contract interaction
+ * @param clobClient CLOB client instance (not used directly, but kept for interface consistency)
+ */
+export default async function claimWithClobApi(clobClient: ClobClient) {
+    try {
+        console.log('🔍 Fetching all claimable positions for your wallet...');
+        
+        // Get current positions
+        const my_positions: UserPositionInterface[] = await fetchData(
+            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+        );
+        
+        if (!my_positions || my_positions.length === 0) {
+            console.log('ℹ️ No positions found to claim.');
+            return;
+        }
+        
+        // Filter for positions that are redeemable (resolved markets with winning positions)
+        const redeemablePositions = my_positions.filter(pos => pos.redeemable === true);
+        
+        if (redeemablePositions.length === 0) {
+            console.log('ℹ️ No redeemable positions found. All your markets may still be active or you have no winning positions.');
+            return;
+        }
+        
+        console.log(`🎯 Found ${redeemablePositions.length} redeemable positions to claim:`);
+        redeemablePositions.forEach((pos, index) => {
+            console.log(`  ${index + 1}. ${pos.title || pos.conditionId} - ${pos.size} tokens, Asset: ${pos.asset}`);
+        });
+        
+        // Set up provider for direct contract interaction, avoiding ENS lookups
+        console.log('🔄 Setting up wallet and provider...');
+        const provider = createRpcProvider(RPC_URL);
+        const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+        
+        // CTF Exchange ABI (minimal for redeem function)
+        const CTF_ABI = [
+            'function redeem(address _tokenAddress, uint256 _amount) external'
+        ];
+        
+        const ctfExchange = new ethers.Contract(POLYMARKET_EXCHANGE_ADDRESS, CTF_ABI, wallet);
+        
+        console.log(`📍 Wallet address: ${wallet.address}`);
+        console.log(`🏪 Exchange contract: ${POLYMARKET_EXCHANGE_ADDRESS}`);
+        
+        // Gas settings
+        const maxPriorityFeePerGas = ethers.utils.parseUnits(DEFAULT_MAX_PRIORITY_FEE, 'gwei');
+        const maxFeePerGas = ethers.utils.parseUnits(DEFAULT_MAX_FEE, 'gwei');
+        
+        console.log(`⛽ Gas settings: Max Priority Fee: ${ethers.utils.formatUnits(maxPriorityFeePerGas, 'gwei')} GWEI, Max Fee: ${ethers.utils.formatUnits(maxFeePerGas, 'gwei')} GWEI`);
+        
+        // Claim each position
+        for (const position of redeemablePositions) {
+            try {
+                console.log(`\n🔄 Claiming position for market: ${position.title || position.conditionId}`);
+                console.log(`   Token: ${position.asset}`);
+                console.log(`   Amount: ${position.size} tokens`);
+                
+                // Round down to integer - Polymarket only accepts integer token amounts
+                const integerAmount = Math.floor(position.size);
+                console.log(`   Amount (integer only): ${integerAmount} tokens`);
+                
+                if (integerAmount <= 0) {
+                    console.log('❌ Position too small to redeem (less than 1 token)');
+                    continue;
+                }
+                
+                // Submit redemption transaction
+                const tx = await ctfExchange.redeem(
+                    position.asset, 
+                    ethers.BigNumber.from(integerAmount),
+                    {
+                        maxPriorityFeePerGas,
+                        maxFeePerGas
+                    }
+                );
+                
+                console.log(`📤 Transaction hash: ${tx.hash}`);
+                console.log('⏳ Waiting for confirmation...');
+                
+                const receipt = await tx.wait();
+                console.log(`✅ Transaction confirmed in block ${receipt.blockNumber}`);
+                console.log(`💰 Successfully claimed position!`);
+                
+            } catch (error) {
+                console.error(`❌ Error claiming position for ${position.title || position.conditionId}:`, error);
+                console.log('⚠️ Continuing with next position...');
+            }
+            
+            // Add a small delay between transactions
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+        console.log('\n🎉 Claim all process completed!');
+        
+    } catch (error) {
+        console.error('❌ Error in claimAllPositions:', error);
+        console.log('⚠️ Continuing with regular trading despite claiming errors...');
+    }
+}
