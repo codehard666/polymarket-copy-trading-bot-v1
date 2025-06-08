@@ -10,7 +10,7 @@ const POLYMARKET_EXCHANGE_ADDRESS = process.env.POLYMARKET_EXCHANGE_ADDRESS || '
 const CLOB_HTTP_URL = process.env.CLOB_HTTP_URL || 'https://clob.polymarket.com';
 const CLOB_WS_URL = process.env.CLOB_WS_URL || 'wss://ws-subscriptions-clob.polymarket.com/ws';
 
-// Create a new CLOB client - fixing the signer issue
+// Create a new CLOB client with API key authentication
 async function createClobClient() {
     console.log('🔄 Creating Polymarket CLOB client...');
     
@@ -21,18 +21,53 @@ async function createClobClient() {
         
         console.log('📝 Creating client with wallet:', wallet.address);
         
-        // Use the correct ClobClient constructor format
-        const client = new ClobClient(
+        // Create initial client without API key
+        let client = new ClobClient(
             CLOB_HTTP_URL,
             137, // Polygon chain ID
             wallet, // Use wallet directly as signer
-            undefined, // clobAuth (optional)
+            undefined, // No clobAuth initially
             {
                 funderAddress: undefined // No funder needed
             }
         );
         
-        console.log('✅ CLOB client created successfully');
+        // Temporarily suppress console.error during API key creation
+        console.log('🔑 Requesting API credentials...');
+        const originalConsoleError = console.error;
+        console.error = function () {};
+        
+        // Try to create or derive API key
+        let creds;
+        try {
+            creds = await client.createApiKey();
+        } catch (createError) {
+            console.log('⚠️ Could not create new API key, trying to derive existing key...');
+            creds = await client.deriveApiKey();
+        } finally {
+            // Restore error logging
+            console.error = originalConsoleError;
+        }
+        
+        if (creds && creds.key) {
+            console.log('✅ API credentials obtained successfully');
+            
+            // Create new client with API credentials
+            client = new ClobClient(
+                CLOB_HTTP_URL,
+                137,
+                wallet,
+                creds, // Use obtained credentials
+                {
+                    funderAddress: undefined // No funder needed
+                }
+            );
+            
+            console.log('✅ CLOB client created successfully with API authentication');
+        } else {
+            console.log('⚠️ Could not obtain API credentials, using unauthenticated client');
+        }
+        
         return client;
     } catch (error) {
         console.error('❌ Error creating CLOB client:', error);
@@ -106,45 +141,135 @@ async function sellPosition(clobClient, position) {
         console.log(`📈 Selling ${saleAmount} tokens at ${bestBid.price} USDC each`);
         console.log(`💵 Expected proceeds: ~${expectedProceeds.toFixed(6)} USDC`);
         
-        // Create order arguments with proper formatting
-        const orderArgs = {
-            side: Side.SELL,
-            tokenID: position.asset,
-            amount: ethers.utils.parseUnits(saleAmount.toString(), 6), // Convert to proper units
-            price: ethers.utils.parseUnits(parseFloat(bestBid.price).toString(), 6), // Convert to proper units
-        };
-        
-        console.log('🚀 Creating market sell order...');
-        const signedOrder = await clobClient.createOrder(orderArgs);
-        
-        console.log('📤 Submitting order...');
-        const response = await clobClient.postOrder(signedOrder, OrderType.FOK);
-        
-        if (response.success) {
-            console.log('✅ Sell order executed successfully!');
-            console.log(`📝 Order ID: ${response.orderID}`);
-            if (response.transactionsHashes && response.transactionsHashes.length) {
-                console.log(`🔗 Transaction hash: ${response.transactionsHashes[0]}`);
+        try {
+            console.log('📤 Creating sell order...');
+            
+            try {
+                // Use same parameters as in the working code from src/test/test.ts
+                console.log('🔍 Creating order with correct parameters...');
+                
+                // Use size instead of amount based on existing working code
+                const orderArgs = {
+                    side: Side.SELL,
+                    tokenID: position.asset,
+                    size: saleAmount, // Use size instead of amount
+                    price: parseFloat(bestBid.price)
+                };
+                
+                console.log('📝 Order parameters:', orderArgs);
+                const signedOrder = await clobClient.createOrder(orderArgs);
+                
+                if (signedOrder) {
+                    console.log('✅ Order created successfully!');
+                    console.log('📤 Posting order to exchange...');
+                    
+                    // Try both FOK and GTC order types
+                    try {
+                        const response = await clobClient.postOrder(signedOrder, OrderType.FOK);
+                        
+                        if (response && response.success) {
+                            console.log('🎉 Order executed successfully!');
+                            console.log(`📝 Order ID: ${response.orderID}`);
+                            
+                            return {
+                                title: position.title,
+                                outcome: position.outcome,
+                                amountSold: saleAmount,
+                                price: parseFloat(bestBid.price),
+                                proceeds: expectedProceeds,
+                                success: true
+                            };
+                        } else {
+                            // Try again with GTC order type if FOK fails
+                            console.log('⚠️ FOK order failed, trying GTC...');
+                            const gtcResponse = await clobClient.postOrder(signedOrder, OrderType.GTC);
+                            
+                            if (gtcResponse && gtcResponse.success) {
+                                console.log('🎉 GTC order executed successfully!');
+                                console.log(`📝 Order ID: ${gtcResponse.orderID}`);
+                                return {
+                                    title: position.title,
+                                    outcome: position.outcome,
+                                    amountSold: saleAmount,
+                                    price: parseFloat(bestBid.price),
+                                    proceeds: expectedProceeds,
+                                    success: true
+                                };
+                            } else {
+                                const errorMsg = gtcResponse && gtcResponse.errorMsg ? gtcResponse.errorMsg : 'Unknown error';
+                                console.log('❌ GTC order failed:', errorMsg);
+                                return {
+                                    title: position.title,
+                                    outcome: position.outcome,
+                                    success: false,
+                                    error: errorMsg || 'No error message received'
+                                };
+                            }
+                        }
+                    } catch (postError) {
+                        console.error('❌ Error posting order:', postError);
+                        return {
+                            title: position.title,
+                            outcome: position.outcome,
+                            success: false,
+                            error: postError.message || 'Error posting order'
+                        };
+                    }
+                }
+            } catch (orderError) {
+                console.error('❌ Order creation error:', orderError);
+                
+                // If creating the order fails, try the market order approach from src/utils/postOrder.ts
+                console.log('🔄 Trying market order approach from copy-trading codebase...');
+                
+                try {
+                    const marketOrderArgs = {
+                        side: Side.SELL,
+                        tokenID: position.asset,
+                        amount: Math.min(saleAmount, 10), // Start with smaller amount
+                        price: parseFloat(bestBid.price)
+                    };
+                    
+                    console.log('📝 Market order parameters:', marketOrderArgs);
+                    const marketOrder = await clobClient.createMarketOrder(marketOrderArgs);
+                    
+                    if (marketOrder) {
+                        const response = await clobClient.postOrder(marketOrder, OrderType.FOK);
+                        
+                        if (response && response.success) {
+                            console.log('🎉 Market order executed successfully!');
+                            return {
+                                title: position.title,
+                                outcome: position.outcome,
+                                amountSold: marketOrderArgs.amount,
+                                price: parseFloat(bestBid.price),
+                                proceeds: marketOrderArgs.amount * parseFloat(bestBid.price),
+                                success: true
+                            };
+                        }
+                    }
+                } catch (marketOrderError) {
+                    console.error('❌ Market order failed:', marketOrderError);
+                }
+                
+                return {
+                    title: position.title,
+                    outcome: position.outcome,
+                    success: false,
+                    error: 'All order creation approaches failed'
+                };
             }
-            return {
-                title: position.title,
-                outcome: position.outcome,
-                amountSold: saleAmount,
-                price: parseFloat(bestBid.price),
-                proceeds: expectedProceeds,
-                success: true
-            };
-        } else {
-            console.log('❌ Sell order failed:', response.errorMsg || 'Unknown error');
+        } catch (error) {
+            console.error('❌ Error selling position:', error.message || error);
             return {
                 title: position.title,
                 outcome: position.outcome,
                 success: false,
-                error: response.errorMsg || 'Unknown error'
+                error: error.message || 'Unknown error'
             };
         }
     } catch (error) {
-        console.error('❌ Error selling position:', error.message || error);
+        console.error('❌ Error processing position:', error.message || error);
         return {
             title: position.title,
             outcome: position.outcome,
@@ -154,7 +279,7 @@ async function sellPosition(clobClient, position) {
     }
 }
 
-// Main function to sell all positions
+// Main function to sell selected positions
 async function sellAllPositions() {
     console.log('🚀 Starting Polymarket Position Liquidator');
     console.log('='.repeat(50));
@@ -171,58 +296,73 @@ async function sellAllPositions() {
             return;
         }
         
-        console.log('📋 Positions to sell:');
+        console.log('📋 Available positions to sell:');
         positions.forEach((pos, i) => {
             console.log(`${i + 1}. ${pos.title} - ${pos.outcome} (${pos.size} tokens)`);
         });
         
-        console.log('\n⏳ Selling all positions. This may take a while...');
+        // Allow user to select positions by inputting numbers
+        const readline = require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
         
-        // Process each position
+        const askForPositions = () => {
+            return new Promise((resolve) => {
+                readline.question('\n📊 Enter the position number(s) to sell (e.g. "1" or "1,3,5"), or "all" for all positions: ', (answer) => {
+                    resolve(answer.trim());
+                });
+            });
+        };
+        
+        const positionInput = await askForPositions();
+        readline.close();
+        
+        let positionsToSell = [];
+        if (positionInput.toLowerCase() === 'all') {
+            positionsToSell = [...positions];
+            console.log('\n⏳ Selling ALL positions. This may take a while...');
+        } else {
+            const selectedIndices = positionInput
+                .split(',')
+                .map(num => parseInt(num.trim()) - 1) // Convert to 0-based index
+                .filter(idx => idx >= 0 && idx < positions.length); // Ensure indices are valid
+                
+            if (selectedIndices.length === 0) {
+                console.log('❌ No valid positions selected. Exiting.');
+                return;
+            }
+            
+            positionsToSell = selectedIndices.map(idx => positions[idx]);
+            console.log(`\n⏳ Selling ${positionsToSell.length} selected positions. This may take a while...`);
+        }
+        
+        // Process each selected position
         const results = [];
-        for (const position of positions) {
+        for (const position of positionsToSell) {
             const result = await sellPosition(clobClient, position);
-            if (result) results.push(result);
+            if (result) {
+                results.push(result);
+            }
             
             // Small delay between orders to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
         
-        // Print summary
-        console.log('\n📊 Sell Operation Summary:');
-        console.log('='.repeat(50));
-        
-        let totalProceeds = 0;
-        let successCount = 0;
-        
-        results.forEach((result, i) => {
-            if (result.success) {
-                console.log(`✅ ${i + 1}. ${result.title} - ${result.outcome}: Sold ${result.amountSold} at ${result.price} USDC (${result.proceeds.toFixed(6)} USDC)`);
-                totalProceeds += result.proceeds;
-                successCount++;
+        console.log('\n📊 Sell results:');
+        results.forEach((res, i) => {
+            if (res.success) {
+                console.log(`${i + 1}. ${res.title} (${res.outcome}): Sold ${res.amountSold} tokens at ${res.price} USDC each, proceeds: ${res.proceeds} USDC`);
             } else {
-                console.log(`❌ ${i + 1}. ${result.title} - ${result.outcome}: Failed (${result.error})`);
+                console.log(`${i + 1}. ${res.title} (${res.outcome}): ❌ Failed to sell - ${res.error}`);
             }
         });
         
-        console.log('='.repeat(50));
-        console.log(`📈 Total positions: ${positions.length}`);
-        console.log(`✅ Successfully sold: ${successCount}`);
-        console.log(`❌ Failed: ${positions.length - successCount}`);
-        console.log(`💰 Total proceeds: ~${totalProceeds.toFixed(6)} USDC`);
-        console.log('='.repeat(50));
-        
-        if (successCount < positions.length) {
-            console.log('\n💡 Some positions failed to sell. You can:');
-            console.log('1. Run this script again to retry');
-            console.log('2. Try selling them manually on Polymarket');
-            console.log('3. Wait for better market conditions');
-        }
-        
+        console.log('✅ Process completed');
     } catch (error) {
         console.error('❌ Error in main process:', error);
     }
 }
 
-// Run the script
+// Execute the main function
 sellAllPositions().catch(console.error);
