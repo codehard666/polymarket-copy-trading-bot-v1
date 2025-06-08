@@ -29,14 +29,20 @@ async function createClobClient() {
         ).substring(2); // Remove 0x prefix
         
         console.log('📝 Creating client with wallet:', wallet.address);
+        console.log('🔍 Host value:', CLOB_HTTP_URL, 'Type:', typeof CLOB_HTTP_URL);
         
-        const client = new ClobClient({
-            httpUrl: CLOB_HTTP_URL,
-            wsUrl: CLOB_WS_URL,
-            signer: wallet,
-            apiKey: apiKey,
-            passphrase: passphrase
-        });
+        // Ensure host is definitely a string
+        const hostUrl = String(CLOB_HTTP_URL || 'https://clob.polymarket.com');
+        console.log('🔍 Converted host:', hostUrl, 'Type:', typeof hostUrl);
+        
+        const client = new ClobClient(
+            hostUrl,
+            wallet,
+            {
+                apiKey: apiKey,
+                passphrase: passphrase
+            }
+        );
         
         console.log('✅ CLOB client created successfully');
         return client;
