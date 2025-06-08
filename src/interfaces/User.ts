@@ -25,6 +25,7 @@ export interface UserActivityInterface {
     profileImageOptimized: string;
     bot: boolean;
     botExcutedTime: number;
+    botExecutionStatus?: string; // Add status field
 }
 
 export interface UserPositionInterface {

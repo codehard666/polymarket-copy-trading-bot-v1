@@ -38,4 +38,6 @@ export const ENV = {
     MONGO_URI: process.env.MONGO_URI as string,
     RPC_URL: process.env.RPC_URL as string,
     USDC_CONTRACT_ADDRESS: process.env.USDC_CONTRACT_ADDRESS as string,
+    MIN_ORDER_USD: parseFloat(process.env.MIN_ORDER_USD || '1.0'), // Polymarket minimum
+    MIN_TOKENS: parseFloat(process.env.MIN_TOKENS || '2.0'), // Your requirement
 };

@@ -91,24 +91,61 @@ const postOrder = async (
             }, orderBook.asks[0]);
 
             console.log('Min price ask:', minPriceAsk);
-            if (parseFloat(minPriceAsk.price) - 0.05 > trade.price) {
+            if (parseFloat(minPriceAsk.price) - 0.20 > trade.price) {
                 console.log('Too big different price - do not copy');
                 await UserActivity.updateOne({ _id: trade._id }, { bot: true });
                 break;
             }
             let order_arges;
-            if (remaining <= parseFloat(minPriceAsk.size) * parseFloat(minPriceAsk.price)) {
+            // Calculate token amount: USDC amount / price = token shares
+            let tokenAmount = remaining / parseFloat(minPriceAsk.price);
+            
+            // Ensure minimum 2 tokens for testing phase
+            const minTokens = 2;
+            if (tokenAmount < minTokens) {
+                console.log(`Calculated token amount (${tokenAmount.toFixed(6)}) is less than minimum (${minTokens}). Setting to minimum.`);
+                tokenAmount = minTokens;
+                remaining = tokenAmount * parseFloat(minPriceAsk.price); // Update remaining USDC needed
+                console.log(`Updated remaining USDC needed: ${remaining.toFixed(6)}`);
+            }
+            
+            // Check if we have enough balance for the required amount
+            const orderValueUSD = tokenAmount * parseFloat(minPriceAsk.price);
+            console.log(`Order value needed: $${orderValueUSD.toFixed(6)} USDC`);
+            console.log(`Available balance: $${my_balance.toFixed(6)} USDC`);
+            
+            if (orderValueUSD > my_balance) {
+                console.log(`⚠️ Insufficient balance! Need $${orderValueUSD.toFixed(6)} but only have $${my_balance.toFixed(6)}`);
+                console.log(`💡 Either fund your wallet or check USDC allowance (run: node approve-usdc.js check)`);
+                await UserActivity.updateOne(
+                    { _id: trade._id }, 
+                    { 
+                        bot: true,
+                        botExecutionStatus: 'INSUFFICIENT_BALANCE'
+                    }
+                );
+                break;
+            }
+            
+            // Check if order meets minimum $1 USD requirement
+            if (orderValueUSD < 1.0) {
+                console.log(`Order value ($${orderValueUSD.toFixed(2)}) is below minimum $1. Adjusting to $1 minimum.`);
+                tokenAmount = 1.0 / parseFloat(minPriceAsk.price);
+                remaining = 1.0; // Set remaining to $1
+            }
+            
+            if (tokenAmount <= parseFloat(minPriceAsk.size)) {
                 order_arges = {
                     side: Side.BUY,
                     tokenID: trade.asset,
-                    amount: remaining,
+                    amount: Math.floor(tokenAmount * 1000000) / 1000000, // Round to 6 decimals
                     price: parseFloat(minPriceAsk.price),
                 };
             } else {
                 order_arges = {
                     side: Side.BUY,
                     tokenID: trade.asset,
-                    amount: parseFloat(minPriceAsk.size) * parseFloat(minPriceAsk.price),
+                    amount: parseFloat(minPriceAsk.size),
                     price: parseFloat(minPriceAsk.price),
                 };
             }
@@ -118,7 +155,7 @@ const postOrder = async (
             if (resp.success === true) {
                 retry = 0;
                 console.log('Successfully posted order:', resp);
-                remaining -= order_arges.amount;
+                remaining -= order_arges.amount * order_arges.price; // Subtract USDC amount spent
             } else {
                 retry += 1;
                 console.log('Error posting order: retrying...', resp);
