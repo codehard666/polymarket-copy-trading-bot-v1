@@ -19,28 +19,16 @@ async function createClobClient() {
         const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
         const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
         
-        // For ClobClient, we need to generate a deterministic API key
-        // that will be consistent across restarts
-        const apiKey = "529f77d0-cf1a-d991-ad9f-b3bfa6ccea28"; // Using a fixed API key for consistency
-        
-        // Generate a deterministic passphrase from the private key and API key
-        const passphrase = ethers.utils.keccak256(
-            ethers.utils.toUtf8Bytes(PRIVATE_KEY)
-        ).substring(2); // Remove 0x prefix
-        
         console.log('📝 Creating client with wallet:', wallet.address);
-        console.log('🔍 Host value:', CLOB_HTTP_URL, 'Type:', typeof CLOB_HTTP_URL);
         
-        // Ensure host is definitely a string
-        const hostUrl = String(CLOB_HTTP_URL || 'https://clob.polymarket.com');
-        console.log('🔍 Converted host:', hostUrl, 'Type:', typeof hostUrl);
-        
+        // Use the correct ClobClient constructor format
         const client = new ClobClient(
-            hostUrl,
-            wallet,
+            CLOB_HTTP_URL,
+            137, // Polygon chain ID
+            wallet, // Use wallet directly as signer
+            undefined, // clobAuth (optional)
             {
-                apiKey: apiKey,
-                passphrase: passphrase
+                funderAddress: undefined // No funder needed
             }
         );
         
@@ -118,16 +106,16 @@ async function sellPosition(clobClient, position) {
         console.log(`📈 Selling ${saleAmount} tokens at ${bestBid.price} USDC each`);
         console.log(`💵 Expected proceeds: ~${expectedProceeds.toFixed(6)} USDC`);
         
-        // Create order arguments
+        // Create order arguments with proper formatting
         const orderArgs = {
             side: Side.SELL,
             tokenID: position.asset,
-            amount: saleAmount,
-            price: parseFloat(bestBid.price),
+            amount: ethers.utils.parseUnits(saleAmount.toString(), 6), // Convert to proper units
+            price: ethers.utils.parseUnits(parseFloat(bestBid.price).toString(), 6), // Convert to proper units
         };
         
         console.log('🚀 Creating market sell order...');
-        const signedOrder = await clobClient.createMarketOrder(orderArgs);
+        const signedOrder = await clobClient.createOrder(orderArgs);
         
         console.log('📤 Submitting order...');
         const response = await clobClient.postOrder(signedOrder, OrderType.FOK);
