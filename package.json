@@ -5,7 +5,9 @@
     "scripts": {
         "build": "tsc",
         "start": "node dist/index.js",
+        "start:sell-all": "node dist/index.js sell_all",
         "dev": "ts-node src/index.ts",
+        "dev:sell-all": "ts-node src/index.ts sell_all",
         "lint": "eslint .",
         "lint:fix": "eslint --fix .",
         "format": "prettier --write .",

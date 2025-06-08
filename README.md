@@ -7,6 +7,7 @@ This project is a Polymarket Copy Trading Bot that allows users to automatically
 - **Automated Trading**: Automatically copy trades from a selected trader.
 - **Real-time Monitoring**: Continuously monitor the selected trader's activity.
 - **Customizable Settings**: Configure trading parameters and risk management.
+- **Sell All Option**: Liquidate all open positions before starting to copy trades.
 
 ## Installation
 1. Install latest version of Node.js and npm
@@ -50,6 +51,24 @@ This project is a Polymarket Copy Trading Bot that allows users to automatically
     ```bash
     npm run start
     ```
+
+## Usage
+
+### Regular Copy Trading
+To build and run the bot for normal copy trading:
+```bash
+npm run build
+npm run start
+```
+
+### Liquidate All Positions First
+To liquidate all your current positions before starting copy trading:
+```bash
+npm run build
+npm run start:sell-all
+```
+
+For more details about the sell_all feature, see [SELL_ALL_FEATURE.md](SELL_ALL_FEATURE.md).
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request. And if you are interested in this project, please consider giving it a star✨.

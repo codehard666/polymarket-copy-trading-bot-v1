@@ -4,6 +4,7 @@ import { ENV } from '../config/env';
 import { getUserActivityModel } from '../models/userHistory';
 import fetchData from '../utils/fetchData';
 import spinner from '../utils/spinner';
+import mongoose from 'mongoose';
 import getMyBalance from '../utils/getMyBalance';
 import postOrder from '../utils/postOrder';
 import { ethers } from 'ethers';
@@ -238,6 +239,100 @@ const doTrading = async (clobClient: ClobClient) => {
     }
 };
 
+// Add a function to liquidate all positions
+const liquidateAllPositions = async (clobClient: ClobClient) => {
+    try {
+        console.log('🔍 Fetching all current positions for your wallet...');
+        
+        // Get current positions
+        const my_positions: UserPositionInterface[] = await fetchData(
+            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+        );
+        
+        if (!my_positions || my_positions.length === 0) {
+            console.log('ℹ️ No open positions found to liquidate.');
+            return;
+        }
+        
+        console.log(`📊 Found ${my_positions.length} open positions to liquidate:`);
+        for (const position of my_positions) {
+            console.log(`- ${position.conditionId}: ${position.size} tokens (${position.outcome})`);
+        }
+        
+        // Process each position to sell
+        for (const position of my_positions) {
+            try {
+                console.log(`🔄 Liquidating position: ${position.conditionId} (${position.outcome})`);
+                
+                // Create a placeholder trade object
+                const placeholderTrade: UserActivityInterface = {
+                    _id: new mongoose.Types.ObjectId(),
+                    proxyWallet: PROXY_WALLET,
+                    conditionId: position.conditionId,
+                    asset: position.asset,
+                    outcome: position.outcome,
+                    title: `Liquidation of ${position.conditionId}`,
+                    side: 'SELL',
+                    price: 0, // Will be determined by the market
+                    size: position.size,
+                    usdcSize: 0, // Will be calculated based on market price
+                    timestamp: Math.floor(Date.now() / 1000),
+                    transactionHash: 'sellall_' + Date.now(),
+                    type: 'TRADE',
+                    outcomeIndex: 0, // Default, update if needed
+                    slug: position.conditionId, // Using conditionId as slug
+                    icon: '',
+                    eventSlug: '',
+                    name: '',
+                    pseudonym: '',
+                    bio: '',
+                    profileImage: '',
+                    profileImageOptimized: '',
+                    bot: true,
+                    botExcutedTime: Date.now(),
+                    botExecutionStatus: 'SELL_ALL'
+                };
+                
+                // Use the 'merge' strategy to sell all tokens (merge is used for selling in your codebase)
+                await postOrder(
+                    clobClient,
+                    'merge', // 'merge' is the condition to sell tokens in your codebase
+                    position, // Our current position
+                    undefined, // No need for user position
+                    placeholderTrade,
+                    0, // Not relevant for selling
+                    0  // Not relevant for selling
+                );
+                
+                console.log(`✅ Position ${position.conditionId} liquidation completed`);
+                
+            } catch (error) {
+                console.error(`❌ Error liquidating position ${position.conditionId}:`, error);
+                console.log('⚠️ Continuing with next position...');
+            }
+            
+            // Add a small delay between liquidations
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+        // Double check if all positions are liquidated
+        const remainingPositions: UserPositionInterface[] = await fetchData(
+            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+        );
+        
+        if (remainingPositions && remainingPositions.length > 0) {
+            console.log(`⚠️ Note: ${remainingPositions.length} positions could not be fully liquidated`);
+            console.log('🔄 Continuing with regular trading anyway...');
+        } else {
+            console.log('🎉 All positions successfully liquidated! Starting with a clean slate.');
+        }
+        
+    } catch (error) {
+        console.error('❌ Error in liquidateAllPositions:', error);
+        console.log('⚠️ Continuing with regular trading despite liquidation errors...');
+    }
+};
+
 // Add a diagnostic function
 const resetFailedTrades = async () => {
     const oneHourAgo = Math.floor(Date.now()/1000) - 3600;
@@ -257,11 +352,18 @@ const resetFailedTrades = async () => {
     console.log(`🔄 Reset ${result.modifiedCount} failed trades for retry`);
 };
 
-const tradeExcutor = async (clobClient: ClobClient) => {
+const tradeExcutor = async (clobClient: ClobClient, sellAllBeforeStart: boolean = false) => {
     console.log(`🚀 Starting Copy Trading Bot`);
     
     // Clear allowance cache on startup
     clearAllowanceCache();
+
+    // If sell_all flag is set, liquidate all positions first
+    if (sellAllBeforeStart) {
+        console.log('🧹 Sell All flag detected - liquidating all existing positions before starting...');
+        await liquidateAllPositions(clobClient);
+        console.log('✅ Position liquidation process completed');
+    }
 
     // Reset any failed trades on startup
     await resetFailedTrades();
