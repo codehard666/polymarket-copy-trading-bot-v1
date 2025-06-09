@@ -9,6 +9,7 @@ npm run build
 npm run start
 npm run start:sell-all
 npm run start:claim-all
+npm run start:skip-past-trades
 node force-claim-position.js
 node force-claim-position.js 0xe7faa8aacdd9ea6eff958cb58669265a011d4669bf46c7a0c1ef64313f81e737 1
 

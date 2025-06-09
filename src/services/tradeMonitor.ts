@@ -22,6 +22,25 @@ const init = async () => {
     temp_trades = (await UserActivity.find().exec()).map((trade) => trade as UserActivityInterface);
 };
 
+const isTradeUnique = (activity: UserActivityInterface, temp_trades: UserActivityInterface[]) => {
+    // Check if there's any existing trade that exactly matches this one
+    return !temp_trades.some(existingTrade => {
+        const timeMatch = moment.unix(existingTrade.timestamp).isSame(moment.unix(activity.timestamp), 'second');
+        const sideMatch = existingTrade.side === activity.side;
+        const assetMatch = existingTrade.asset === activity.asset;
+        const sizeMatch = Math.abs(existingTrade.size - activity.size) < 0.00001; // Use small epsilon for float comparison
+        const priceMatch = Math.abs(existingTrade.price - activity.price) < 0.00001;
+        const hashMatch = existingTrade.transactionHash === activity.transactionHash;
+        const outcomeMatch = existingTrade.outcome === activity.outcome;
+        const conditionMatch = existingTrade.conditionId === activity.conditionId;
+        
+        // A trade is considered duplicate if it matches either:
+        // 1. Same transaction hash (definitely same trade) OR
+        // 2. Same timestamp AND all trade details match (same trading action)
+        return (hashMatch) || (timeMatch && sideMatch && assetMatch && sizeMatch && priceMatch && outcomeMatch && conditionMatch);
+    });
+};
+
 const fetchTradeData = async () => {
     try {
         console.log(`🔍 Checking for trades at ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
@@ -67,18 +86,18 @@ const fetchTradeData = async () => {
         }
 
         // Process new activities
+        const startupTime = moment().unix(); // Record when we started
         for (const activity of recentActivities) {
-            // Check if this activity already exists in our database
-            const existingActivity = temp_trades.find(
-                (trade) => trade.transactionHash === activity.transactionHash
-            );
-            
-            if (!existingActivity) {
-                // Add bot tracking fields
+            // Check if this activity is unique considering all criteria
+            if (isTradeUnique(activity, temp_trades)) {
+                // Add bot tracking fields, marking as skipped if it was before startup
+                const wasBeforeStartup = activity.timestamp < startupTime;
+                
                 const newActivity = {
                     ...activity,
-                    bot: false,
-                    botExcutedTime: 0
+                    bot: false, // Always mark as unprocessed so it can be copied
+                    botExcutedTime: 0,
+                    botExecutionStatus: wasBeforeStartup ? 'SKIPPED_PRE_START' : 'PENDING'
                 };
 
                 // Save to database
