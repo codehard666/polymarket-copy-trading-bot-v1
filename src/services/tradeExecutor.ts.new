@@ -14,7 +14,7 @@ import createRpcProvider from '../utils/createRpcProvider';
 const USER_ADDRESS = ENV.USER_ADDRESS;
 const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const PROXY_WALLET = ENV.PROXY_WALLET;
-const POLYMARKET_EXCHANGE_ADDRESS = '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'; // CTF Exchange
+const POLYMARKET_CTF_ADDRESS = '0x4d97dcd97ec945f40cf65f87097ace5ea0476045'; // CTF (Conditional Token Framework) contract
 const PRIVATE_KEY = ENV.PRIVATE_KEY;
 const RPC_URL = ENV.RPC_URL;
 const DEFAULT_MAX_PRIORITY_FEE = '30'; // Default gas settings
@@ -76,7 +76,7 @@ const readTempTrade = async () => {
 // Updated function that uses our new robust RPC helper
 async function checkUSDCAllowance(wallet: string): Promise<number> {
     try {
-        return await fetchRpcAllowance(wallet, POLYMARKET_EXCHANGE_ADDRESS);
+        return await fetchRpcAllowance(wallet, POLYMARKET_CTF_ADDRESS);
     } catch (error) {
         console.error('❌ Error checking allowance:', error);
         return 0; // Assume zero allowance on error to be safe
@@ -378,15 +378,15 @@ const claimAllPositions = async (clobClient: ClobClient) => {
         const connectedWallet = wallet.connect(provider);
         
         console.log(`📍 Wallet address: ${connectedWallet.address}`);
-        console.log(`🏪 Exchange contract: ${POLYMARKET_EXCHANGE_ADDRESS}`);
+        console.log(`🏪 CTF contract: ${POLYMARKET_CTF_ADDRESS}`);
         
-        // CTF Exchange ABI (minimal for redeem function)
+        // CTF Exchange ABI (minimal for redeem function) - corrected to use uint256 for tokenId
         const CTF_ABI = [
-            'function redeem(address _tokenAddress, uint256 _amount) external'
+            'function redeem(uint256 _tokenId, uint256 _amount) external'
         ];
         
         const ctfExchange = new ethers.Contract(
-            POLYMARKET_EXCHANGE_ADDRESS, 
+            POLYMARKET_CTF_ADDRESS, 
             CTF_ABI, 
             connectedWallet
         );

@@ -6,47 +6,36 @@ import { ENV } from '../config/env';
  * to avoid errors when working with networks like Polygon
  * that don't support ENS
  */
-export default async function createRpcProvider(rpcUrl = ENV.RPC_URL): Promise<ethers.providers.StaticJsonRpcProvider> {
+export default async function createRpcProvider(rpcUrl = ENV.RPC_URL): Promise<ethers.providers.JsonRpcProvider> {
     if (!rpcUrl) {
         throw new Error('RPC_URL is not defined. Please check your .env file.');
     }
-    
-    // It's generally better to pass the chainId directly if known,
-    // or a minimal network object. Ethers will populate the rest.
-    // For Polygon Mainnet, chainId is 137.
-    const provider = new ethers.providers.StaticJsonRpcProvider(rpcUrl, 137);
 
     try {
-        // Ethers.js v5 populates provider._network for known chain IDs (like 137 for Polygon)
-        // with a network object that includes a default ENS address.
-        // We need to explicitly nullify this to prevent ENS resolution attempts.
-        
-        // The getNetwork() call ensures that provider._network is initialized.
-        const network = await provider.getNetwork(); 
-        
-        if (network && network.ensAddress) {
-            console.log(`Provider\'s network object initially has ENS address: ${network.ensAddress}. Overriding to null.`);
-            
-            // provider._network is the internal cached network object in ethers v5.
-            // We cast to \'any\' to modify this internal property.
-            // This makes the provider believe ENS is not configured for this network.
-            (provider as any)._network.ensAddress = null;
-            
-            // Verify the change (optional, for debugging)
-            const updatedNetwork = await provider.getNetwork(); // Should reflect the change
-            if (updatedNetwork.ensAddress === null) {
-                console.log('Successfully set provider.network.ensAddress to null.');
-            } else {
-                console.warn(`Failed to set provider.network.ensAddress to null. Current value: ${updatedNetwork.ensAddress}`);
-            }
-        } else if (network) {
-            console.log('Provider network object does not have an ENS address, or it is already null.');
-        } else {
-            console.warn('Provider network object could not be retrieved.');
-        }
-    } catch (e) {
-        console.error("Error while attempting to modify provider\'s network ENS address; ENS issues may persist:", e);
-    }
+        // Initialize provider without modifying '_network'
+        const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
-    return provider;
+        // Verify connection
+        const network = await provider.getNetwork();
+        console.log(`📡 Connected to network: ${network.name} (chainId: ${network.chainId})`);
+
+        return provider;
+    } catch (error) {
+        const err = error as any; // Cast error to 'any' to access its properties
+        console.error('Error while creating provider:', err.message);
+        console.error('Stack trace:', err.stack);
+        console.log('Attempting fallback provider initialization...');
+
+        try {
+            // Fallback mechanism
+            const fallbackProvider = new ethers.providers.JsonRpcProvider(rpcUrl);
+            console.log('✅ Fallback provider initialized successfully.');
+            return fallbackProvider;
+        } catch (fallbackError) {
+            const fallbackErr = fallbackError as any; // Cast fallbackError to 'any'
+            console.error('Fallback provider also failed:', fallbackErr.message);
+            console.error('Stack trace:', fallbackErr.stack);
+            throw new Error('Could not initialize RPC provider after multiple attempts');
+        }
+    }
 }

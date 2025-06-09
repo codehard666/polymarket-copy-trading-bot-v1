@@ -1,0 +1,88 @@
+import { ethers } from 'ethers';
+import { ENV } from '../config/env';
+
+/**
+ * Creates an RPC provider with ENS support disabled
+ * to avoid errors when working with networks like Polygon
+ * that don't support ENS
+ */
+export default async function createRpcProvider(rpcUrl = ENV.RPC_URL): Promise<ethers.providers.JsonRpcProvider> {
+    if (!rpcUrl) {
+        throw new Error('RPC_URL is not defined. Please check your .env file.');
+    }
+    
+    // Create provider options with reliability settings
+    const providerOptions = {
+        url: rpcUrl,
+        timeout: 60000, // Increase timeout to 60 seconds for better reliability during network congestion
+        throttleLimit: 10, // Increase throttle limit for faster parallel processing
+        skipFetchSetup: true // Optimization to prevent extra network requests
+    };
+    
+    // Create provider - use JsonRpcProvider instead of StaticJsonRpcProvider to avoid TS errors
+    // Don't pass network as second parameter to avoid the TypeScript error
+    const provider = new ethers.providers.JsonRpcProvider(providerOptions);
+
+    try {
+        // Connect to network and verify settings
+        const network = await provider.getNetwork();
+        
+        // Double-check that ENS is properly disabled
+        if (network.ensAddress !== undefined) {
+            console.log(`Warning: Provider's network object still has ENS address: ${network.ensAddress}. Forcing to undefined...`);
+            
+            // Create a clean network object with ensAddress set to undefined
+            // This properly fixes the TypeScript error as we're creating a new object
+            (provider as any)._network = {
+                name: network.name,
+                chainId: network.chainId,
+                ensAddress: undefined
+            };
+            
+            // Verify the change
+            const updatedNetwork = await provider.getNetwork();
+            if (updatedNetwork.ensAddress === undefined) {
+                console.log('Successfully set provider.network.ensAddress to undefined.');
+            } else {
+                console.warn(`Failed to set provider.network.ensAddress to undefined. Current value: ${updatedNetwork.ensAddress}`);
+            }
+        } else {
+            console.log('Provider successfully initialized with ENS disabled.');
+        }
+        
+        // Test connection to make sure provider is working
+        const blockNumber = await provider.getBlockNumber();
+        console.log(`✅ Provider connected successfully to Polygon. Current block: ${blockNumber}`);
+        console.log(`📡 Connected to network: ${network.name} (chainId: ${network.chainId})`);
+        console.log(`📚 ENS address: ${(provider as any)._network.ensAddress}`);
+        
+    } catch (e) {
+        console.error("Error while configuring provider:", e);
+        
+        // Try one more time with a simpler approach
+        console.log("Attempting fallback provider initialization...");
+        
+        try {
+            // Simple initialization without custom options
+            const fallbackProvider = new ethers.providers.JsonRpcProvider(rpcUrl);
+            
+            // Force ENS to undefined immediately
+            (fallbackProvider as any)._network = { 
+                name: 'matic', 
+                chainId: 137, 
+                ensAddress: undefined 
+            };
+            
+            // Test connection
+            await fallbackProvider.getBlockNumber();
+            
+            console.log("✅ Fallback provider initialized successfully.");
+            return fallbackProvider;
+        } catch (fallbackError) {
+            console.error("Fallback provider also failed:", fallbackError);
+            throw new Error("Could not initialize RPC provider after multiple attempts");
+        }
+    }
+
+    return provider;
+}

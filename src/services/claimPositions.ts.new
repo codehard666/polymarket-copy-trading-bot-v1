@@ -6,7 +6,7 @@ import fetchData from '../utils/fetchData';
 import createRpcProvider from '../utils/createRpcProvider';
 
 const PROXY_WALLET = ENV.PROXY_WALLET;
-const POLYMARKET_EXCHANGE_ADDRESS = '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'; // CTF Exchange
+const POLYMARKET_CTF_ADDRESS = '0x4d97dcd97ec945f40cf65f87097ace5ea0476045'; // CTF (Conditional Token Framework) contract
 const PRIVATE_KEY = ENV.PRIVATE_KEY;
 const RPC_URL = ENV.RPC_URL;
 const DEFAULT_MAX_PRIORITY_FEE = '30'; // Default gas settings
@@ -53,10 +53,10 @@ export default async function claimWithClobApi(clobClient: ClobClient) {
             'function redeem(address _tokenAddress, uint256 _amount) external'
         ];
         
-        const ctfExchange = new ethers.Contract(POLYMARKET_EXCHANGE_ADDRESS, CTF_ABI, wallet);
+        const ctfExchange = new ethers.Contract(POLYMARKET_CTF_ADDRESS, CTF_ABI, wallet);
         
         console.log(`📍 Wallet address: ${wallet.address}`);
-        console.log(`🏪 Exchange contract: ${POLYMARKET_EXCHANGE_ADDRESS}`);
+        console.log(`🏪 CTF contract: ${POLYMARKET_CTF_ADDRESS}`);
         
         // Gas settings
         const maxPriorityFeePerGas = ethers.utils.parseUnits(DEFAULT_MAX_PRIORITY_FEE, 'gwei');
