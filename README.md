@@ -26,6 +26,53 @@ This project is a Polymarket Copy Trading Bot that allows users to automatically
 - **Sell All Option**: Liquidate all open positions before starting to copy trades.
 - **Claim All Option**: Claim all redeemable winning positions.
 
+## Trading Algorithm
+
+### Monitoring System
+- **Check Interval**: Bot checks for new trades every `FETCH_INTERVAL` seconds (default: 1 second)
+- **Trade Age Filter**: Only processes trades newer than `TOO_OLD_TIMESTAMP` hours (default: 24 hours)
+- **Data Source**: Fetches user activities and positions from Polymarket API with 400 records per request
+
+### Trade Copying Logic
+
+#### Buy Orders
+- Calculates position size based on relative USDC balance:
+  ```
+  ratio = my_balance / (user_balance + trade.usdcSize)
+  my_trade_size = user_trade_size * ratio
+  ```
+- Example: If you have 1000 USDC and the user has 10000 USDC, and they make a 1000 USDC trade, your trade will be 90.9 USDC (1000/(10000+1000) * 1000)
+
+#### Sell Orders
+- Calculates sell amount based on position size ratio:
+  ```
+  ratio = user_sell_size / (user_position_size + user_sell_size)
+  my_sell_size = my_position_size * ratio
+  ```
+- If user has no previous position, sells your entire position
+
+#### Safety Measures
+1. **Price Protection**:
+   - Won't execute if market price has moved more than 0.20 higher than original trade price
+   - Uses best available price from orderbook
+
+2. **Size Limits**:
+   - Minimum trade: 2 tokens or $1 USD (whichever is larger)
+   - Maximum trade: Limited by available balance and order book liquidity
+
+3. **Trade Validation**:
+   - Unique trade detection using transaction hash and trade details
+   - Retries failed trades up to `RETRY_LIMIT` times (default: 3)
+   - Tracks trade execution status in database
+
+### Transaction Flow
+1. New trade detected → Check if unique
+2. Calculate proportional size based on balance ratio
+3. Verify price hasn't moved significantly
+4. Place market order with Fill-or-Kill (FOK) execution
+5. Update database with trade status
+6. If failed, retry up to configured limit
+
 ## Installation
 1. Install latest version of Node.js and npm
 2. Navigate to the project directory:
@@ -140,23 +187,109 @@ node approve-usdc.js force
 node approve-polymarket-nfts.js
 ```
 
-## Usage
+## Command Reference
 
-### Regular Copy Trading
-To build and run the bot for normal copy trading:
+### Setup and Configuration Commands
 ```bash
+# Approve USDC spending for Polymarket. The 'force' flag will reset and reapprove even if already approved
+node approve-usdc.js force
+
+# Approve NFT trading permissions required for Polymarket trading
+node approve-polymarket-nfts.js
+
+# Check current USDC allowance for your wallet
+node check-allowance.js 
+
+# Verify your wallet is properly configured for trading (checks allowances, balances, and permissions)
+node check-trading-setup.js 
+
+# Analyze Conditional Token Framework (CTF) events for debugging position issues
+node analyze-ctf-events.js
+
+# Check your MATIC balance for gas fees
+node check-matic.js
+
+# Reset failed trade records in the database. Useful if trades got stuck
+node reset-failed-trades.js
+```
+
+### Core Bot Commands
+```bash
+# Build the TypeScript project
 npm run build
+
+# Start the bot in normal trading mode
 npm run start
-```
 
-### Liquidate All Positions First
-To liquidate all your current positions before starting copy trading:
-```bash
-npm run build
+# Start bot after selling all current positions
 npm run start:sell-all
+
+# Start bot and claim all redeemable winning positions first
+npm run start:claim-all
+
+# Start bot ignoring all past trades (only copy new trades from start time)
+npm run start:skip-past-trades
 ```
 
-For more details about the sell_all feature, see [SELL_ALL_FEATURE.md](SELL_ALL_FEATURE.md).
+### Position Management Commands
+```bash
+# Force claim a specific position when automatic claiming fails
+node force-claim-position.js
+
+# Force claim a specific position by condition ID and outcome index
+# Example: Claiming outcome index 1 for condition 0xe7faa...
+node force-claim-position.js 0xe7faa8aacdd9ea6eff958cb58669265a011d4669bf46c7a0c1ef64313f81e737 1
+```
+
+### Common Command Sequences
+
+1. **Initial Setup**:
+   ```bash
+   node check-trading-setup.js  # Check configuration
+   node approve-usdc.js force   # Approve USDC spending
+   node approve-polymarket-nfts.js  # Approve NFT trading
+   npm run build               # Build the project
+   ```
+
+2. **Fresh Start (No Previous Positions)**:
+   ```bash
+   node check-matic.js        # Verify gas balance
+   npm run build
+   npm run start:skip-past-trades
+   ```
+
+3. **Start After Cleaning Up**:
+   ```bash
+   node reset-failed-trades.js  # Clear any failed trades
+   npm run start:sell-all      # Sell existing positions first
+   ```
+
+4. **Claim and Continue**:
+   ```bash
+   npm run start:claim-all    # Claim winnings and continue trading
+   ```
+
+## Timing Parameters
+- **Fetch Interval**: Bot checks for new trades every 1 second (configurable via `FETCH_INTERVAL`)
+- **Trade History**: Looks back 24 hours for trades (configurable via `TOO_OLD_TIMESTAMP`)
+- **API Polling**: Makes API requests every second to get latest user activities
+- **Order Execution**: Places orders immediately after detection with FOK (Fill-or-Kill) execution
+- **Retry Timing**: On failure, retries up to 3 times (configurable via `RETRY_LIMIT`)
+
+## Proxy Wallet System
+The bot uses a proxy wallet system where:
+1. Main monitoring wallet (`USER_ADDRESS`): The address being copied
+2. Trading wallet (`PROXY_WALLET`): Your wallet that executes the trades
+3. Transaction flow:
+   - Monitor main wallet for trades
+   - Calculate proportional amounts
+   - Execute trades from proxy wallet
+   - Track execution status in database
+
+This separation ensures:
+- Clean transaction history tracking
+- Independent balance management
+- No interference with original trader's activities
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request. And if you are interested in this project, please consider giving it a star✨.
