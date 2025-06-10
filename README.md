@@ -13,7 +13,7 @@ npm run start:skip-past-trades
 node force-claim-position.js
 node force-claim-position.js 0xe7faa8aacdd9ea6eff958cb58669265a011d4669bf46c7a0c1ef64313f81e737 1
 
-npm run start -- track_specific_markets 
+npm run start:track_specific_markets 
 
 
 # Polymarket Copy Trading Bot

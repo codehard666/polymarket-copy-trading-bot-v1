@@ -9,6 +9,7 @@
         "start:claim-all": "node dist/index.js claim_all",
         "start:skip-past-trades": "node dist/index.js skip_past_trades",
         "start:track_specific_markets": "node dist/index.js track_specific_markets",
+        "start:bet_sell_market": "node dist/index.js bet_sell_market",
         "market-ids": "ts-node src/scripts/manageMarketIds.ts",
         "delete-market": "node delete-market-data.js",
         "lint": "eslint .",

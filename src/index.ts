@@ -3,9 +3,9 @@ import { ENV } from './config/env';
 import createClobClient from './services/createClobClient';
 import tradeExecutor from './services/tradeExecutor';
 import tradeMonitor from './services/tradeMonitor';
-import test from './test/test';
 import { getUserActivityModel } from './models/userHistory';
 import { updateSpecificMarkets } from './services/specificMarketTracker';
+import { betSellOnMarketId } from './services/betSellOnMarket';
 
 const USER_ADDRESS = ENV.USER_ADDRESS;
 const PROXY_WALLET = ENV.PROXY_WALLET;
@@ -17,12 +17,14 @@ const shouldSellAll = args.includes('sell_all');
 const shouldClaimAll = args.includes('claim_all');
 const shouldSkipPastTrades = args.includes('skip_past_trades');
 const shouldTrackSpecificMarkets = args.includes('track_specific_markets');
+const betSellMarket = args.includes('bet_sell_market');
 
 console.log('🏷️ Flags:', {
     shouldSellAll,
     shouldClaimAll,
     shouldSkipPastTrades,
-    shouldTrackSpecificMarkets
+    shouldTrackSpecificMarkets,
+    betSellMarket
 });
 
 export const main = async () => {
@@ -30,6 +32,15 @@ export const main = async () => {
     console.log(`Target User Wallet addresss is: ${USER_ADDRESS}`);
     console.log(`My Wallet addresss is: ${PROXY_WALLET}`);
     const clobClient = await createClobClient();
+
+        // bet sell on market if flag is set
+    if (betSellMarket) {
+        console.log('🔍 bet sell market IDs...');
+        // Run immediately once
+        await betSellOnMarketId(clobClient);
+        
+        return;
+    }
 
     // Run the specific market tracker if flag is set
     if (shouldTrackSpecificMarkets) {
