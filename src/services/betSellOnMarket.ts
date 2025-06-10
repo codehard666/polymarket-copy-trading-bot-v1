@@ -20,7 +20,7 @@ const calculateTokenAmount = (usdcAmount: number, price: number): number => {
 };
 
 // Constants for auto-betting
-const MIN_PROBABILITY_THRESHOLD = 0.91; // Only bet on >90% probability
+const MIN_PROBABILITY_THRESHOLD = 0.45; // Temporarily lowered to test market functionality
 const WALLET_PERCENTAGE_TO_BET = 0.10; // 10% of wallet
 const PROXY_WALLET = ENV.PROXY_WALLET;
 
@@ -495,11 +495,13 @@ async function processOutcome(
       
       if (endDate < now) {
         console.log(`   ❌ Market has expired (end date: ${endDate.toISOString()})`);
-        // Don't return yet - let's check if market state allows betting
+        // Check if market state definitively shows it's closed
         if (marketData.state === 'resolved' || marketData.state === 'closed') {
+          console.log(`   ❌ Market state is '${marketData.state}' - skipping`);
           return;
         } else {
-          console.log(`   ⚠️ Market past end date but state is '${marketData.state}' - continuing...`);
+          console.log(`   ⚠️ Market past end date but state is '${marketData.state}' - checking orderbook...`);
+          // Continue to check orderbook - if there's active trading, market might still be live
         }
       }
       
@@ -549,6 +551,21 @@ async function processOutcome(
     console.log(`      - Buy Price: $${bestBidPrice.toFixed(4)}`);
     console.log(`      - Sell Price: $${bestAskPrice.toFixed(4)}`);
     console.log(`      - Spread: $${(bestAskPrice - bestBidPrice).toFixed(4)} (${((bestAskPrice - bestBidPrice) * 100).toFixed(2)}%)`);
+    
+    // Check if orderbook indicates an active market
+    const hasActiveLiquidity = (orderBook.bids && orderBook.bids.length > 0) || (orderBook.asks && orderBook.asks.length > 0);
+    const reasonableSpread = (bestAskPrice - bestBidPrice) < 0.1; // Spread less than 10 cents
+    
+    if (!hasActiveLiquidity) {
+      console.log(`   ❌ No active liquidity in orderbook - market appears closed`);
+      return;
+    }
+    
+    if (!reasonableSpread) {
+      console.log(`   ⚠️ Very wide spread (${((bestAskPrice - bestBidPrice) * 100).toFixed(2)}%) - market may be illiquid`);
+    }
+    
+    console.log(`   ✅ Market appears active with liquidity`);
     
     // Check if the market meets our auto-betting criteria
     if (probability > MIN_PROBABILITY_THRESHOLD && marketData.state !== 'resolved') {
