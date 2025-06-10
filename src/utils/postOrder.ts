@@ -74,9 +74,20 @@ const postOrder = async (
         }
     } else if (condition === 'buy') {       //Buy strategy
         console.log('Buy Strategy...');
-        const ratio = my_balance / (user_balance + trade.usdcSize);
-        console.log('ratio', ratio);
-        let remaining = trade.usdcSize * ratio;
+        
+        // Fixed 20:1 risk ratio - if user bets $1000, we bet $50
+        const RISK_RATIO = 20;
+        const ratio = 1 / RISK_RATIO;  // 1/20 = 0.05
+        console.log('Fixed risk ratio 1:', RISK_RATIO, 'ratio:', ratio);
+        let remaining = trade.usdcSize * ratio;  // We'll trade 5% of what the user trades
+
+        // Enforce minimum order value of $1 USDC
+        if (remaining < 1.0) {
+            console.log(`Order value ($${remaining.toFixed(2)}) is below minimum $1`);
+            await UserActivity.updateOne({ _id: trade._id }, { bot: true, botExecutionStatus: 'ORDER_TOO_SMALL' });
+            return;
+        }
+
         let retry = 0;
         while (remaining > 0 && retry < RETRY_LIMIT) {
             const orderBook = await clobClient.getOrderBook(trade.asset);
@@ -96,19 +107,11 @@ const postOrder = async (
                 await UserActivity.updateOne({ _id: trade._id }, { bot: true });
                 break;
             }
-            let order_arges;
+
             // Calculate token amount: USDC amount / price = token shares
             let tokenAmount = remaining / parseFloat(minPriceAsk.price);
-            
-            // Ensure minimum 2 tokens for testing phase
-            const minTokens = 2;
-            if (tokenAmount < minTokens) {
-                console.log(`Calculated token amount (${tokenAmount.toFixed(6)}) is less than minimum (${minTokens}). Setting to minimum.`);
-                tokenAmount = minTokens;
-                remaining = tokenAmount * parseFloat(minPriceAsk.price); // Update remaining USDC needed
-                console.log(`Updated remaining USDC needed: ${remaining.toFixed(6)}`);
-            }
-            
+            console.log(`Attempting to buy ${tokenAmount.toFixed(6)} tokens at $${minPriceAsk.price} each`);
+
             // Check if we have enough balance for the required amount
             const orderValueUSD = tokenAmount * parseFloat(minPriceAsk.price);
             console.log(`Order value needed: $${orderValueUSD.toFixed(6)} USDC`);
@@ -126,29 +129,20 @@ const postOrder = async (
                 );
                 break;
             }
-            
-            // Check if order meets minimum $1 USD requirement
-            if (orderValueUSD < 1.0) {
-                console.log(`Order value ($${orderValueUSD.toFixed(2)}) is below minimum $1. Adjusting to $1 minimum.`);
-                tokenAmount = 1.0 / parseFloat(minPriceAsk.price);
-                remaining = 1.0; // Set remaining to $1
+
+            let order_arges = {
+                side: Side.BUY,
+                tokenID: trade.asset,
+                amount: Math.floor(tokenAmount * 1000000) / 1000000, // Round to 6 decimals
+                price: parseFloat(minPriceAsk.price),
+            };
+
+            // If the order is larger than available liquidity, adjust it
+            if (tokenAmount > parseFloat(minPriceAsk.size)) {
+                order_arges.amount = parseFloat(minPriceAsk.size);
+                console.log(`Adjusting order size to ${order_arges.amount} due to available liquidity`);
             }
             
-            if (tokenAmount <= parseFloat(minPriceAsk.size)) {
-                order_arges = {
-                    side: Side.BUY,
-                    tokenID: trade.asset,
-                    amount: Math.floor(tokenAmount * 1000000) / 1000000, // Round to 6 decimals
-                    price: parseFloat(minPriceAsk.price),
-                };
-            } else {
-                order_arges = {
-                    side: Side.BUY,
-                    tokenID: trade.asset,
-                    amount: parseFloat(minPriceAsk.size),
-                    price: parseFloat(minPriceAsk.price),
-                };
-            }
             console.log('Order args:', order_arges);
             const signedOrder = await clobClient.createMarketOrder(order_arges);
             const resp = await clobClient.postOrder(signedOrder, OrderType.FOK);
@@ -156,9 +150,23 @@ const postOrder = async (
                 retry = 0;
                 console.log('Successfully posted order:', resp);
                 remaining -= order_arges.amount * order_arges.price; // Subtract USDC amount spent
+                console.log(`Remaining USDC to spend: $${remaining.toFixed(6)}`);
             } else {
                 retry += 1;
                 console.log('Error posting order: retrying...', resp);
+                
+                // If we get an insufficient balance error, break out
+                if (resp.error?.includes('not enough balance/allowance')) {
+                    console.log('❌ Insufficient balance/allowance error, stopping');
+                    await UserActivity.updateOne(
+                        { _id: trade._id },
+                        { 
+                            bot: true,
+                            botExecutionStatus: 'INSUFFICIENT_BALANCE'
+                        }
+                    );
+                    break;
+                }
             }
         }
         if (retry >= RETRY_LIMIT) {
@@ -168,17 +176,32 @@ const postOrder = async (
         }
     } else if (condition === 'sell') {          //Sell strategy
         console.log('Sell Strategy...');
-        let remaining = 0;
         if (!my_position) {
             console.log('No position to sell');
             await UserActivity.updateOne({ _id: trade._id }, { bot: true });
-        } else if (!user_position) {
-            remaining = my_position.size;
-        } else {
-            const ratio = trade.size / (user_position.size + trade.size);
-            console.log('ratio', ratio);
-            remaining = my_position.size * ratio;
+            return;
         }
+
+        // Fixed 20:1 risk ratio - same as buy strategy
+        const RISK_RATIO = 2;
+        const ratio = 1 / RISK_RATIO;  // 1/20 = 0.05 (5%)
+        console.log('Fixed risk ratio 1:', RISK_RATIO, 'ratio:', ratio);
+        let remaining = my_position.size * ratio;  // Sell 5% of our position
+
+        // Ensure we have enough tokens to sell
+        console.log(`Attempting to sell ${remaining.toFixed(6)} tokens`);
+        if (remaining > my_position.size) {
+            console.log(`⚠️ Not enough tokens! Trying to sell ${remaining.toFixed(6)} but only have ${my_position.size}`);
+            await UserActivity.updateOne(
+                { _id: trade._id },
+                { 
+                    bot: true,
+                    botExecutionStatus: 'INSUFFICIENT_TOKENS'
+                }
+            );
+            return;
+        }
+
         let retry = 0;
         while (remaining > 0 && retry < RETRY_LIMIT) {
             const orderBook = await clobClient.getOrderBook(trade.asset);
@@ -193,22 +216,19 @@ const postOrder = async (
             }, orderBook.bids[0]);
 
             console.log('Max price bid:', maxPriceBid);
-            let order_arges;
-            if (remaining <= parseFloat(maxPriceBid.size)) {
-                order_arges = {
-                    side: Side.SELL,
-                    tokenID: trade.asset,
-                    amount: remaining,
-                    price: parseFloat(maxPriceBid.price),
-                };
-            } else {
-                order_arges = {
-                    side: Side.SELL,
-                    tokenID: trade.asset,
-                    amount: parseFloat(maxPriceBid.size),
-                    price: parseFloat(maxPriceBid.price),
-                };
+            let order_arges = {
+                side: Side.SELL,
+                tokenID: trade.asset,
+                amount: remaining,
+                price: parseFloat(maxPriceBid.price),
+            };
+
+            // If the order is larger than available liquidity, adjust it
+            if (remaining > parseFloat(maxPriceBid.size)) {
+                order_arges.amount = parseFloat(maxPriceBid.size);
+                console.log(`Adjusting order size to ${order_arges.amount} due to available liquidity`);
             }
+
             console.log('Order args:', order_arges);
             const signedOrder = await clobClient.createMarketOrder(order_arges);
             const resp = await clobClient.postOrder(signedOrder, OrderType.FOK);
@@ -216,9 +236,23 @@ const postOrder = async (
                 retry = 0;
                 console.log('Successfully posted order:', resp);
                 remaining -= order_arges.amount;
+                console.log(`Remaining tokens to sell: ${remaining.toFixed(6)}`);
             } else {
                 retry += 1;
                 console.log('Error posting order: retrying...', resp);
+                
+                // If we get an insufficient balance error, break out
+                if (resp.error?.includes('not enough balance/allowance')) {
+                    console.log('❌ Insufficient tokens error, stopping');
+                    await UserActivity.updateOne(
+                        { _id: trade._id },
+                        { 
+                            bot: true,
+                            botExecutionStatus: 'INSUFFICIENT_TOKENS'
+                        }
+                    );
+                    break;
+                }
             }
         }
         if (retry >= RETRY_LIMIT) {

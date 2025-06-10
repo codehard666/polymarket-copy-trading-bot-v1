@@ -13,6 +13,8 @@ npm run start:skip-past-trades
 node force-claim-position.js
 node force-claim-position.js 0xe7faa8aacdd9ea6eff958cb58669265a011d4669bf46c7a0c1ef64313f81e737 1
 
+npm run start -- track_specific_markets 
+
 
 # Polymarket Copy Trading Bot
 
@@ -36,20 +38,22 @@ This project is a Polymarket Copy Trading Bot that allows users to automatically
 ### Trade Copying Logic
 
 #### Buy Orders
-- Calculates position size based on relative USDC balance:
+- Uses a fixed 20:1 risk ratio for position sizing:
   ```
-  ratio = my_balance / (user_balance + trade.usdcSize)
+  ratio = 1/20  # Fixed ratio of 0.05 (5%)
   my_trade_size = user_trade_size * ratio
   ```
-- Example: If you have 1000 USDC and the user has 10000 USDC, and they make a 1000 USDC trade, your trade will be 90.9 USDC (1000/(10000+1000) * 1000)
+- Example: If the user makes a $1000 USDC trade, your trade will be $50 USDC (5% of user's trade)
+- This fixed ratio ensures consistent risk management regardless of account balance differences
 
 #### Sell Orders
-- Calculates sell amount based on position size ratio:
+- Uses the same fixed 20:1 risk ratio as buy orders:
   ```
-  ratio = user_sell_size / (user_position_size + user_sell_size)
+  ratio = 1/20  # Fixed ratio of 0.05 (5%)
   my_sell_size = my_position_size * ratio
   ```
-- If user has no previous position, sells your entire position
+- Example: If you have 100 tokens and the user sells 20% of their position, you'll sell 5 tokens (5% of your position)
+- This maintains consistent risk management across both buying and selling
 
 #### Safety Measures
 1. **Price Protection**:
