@@ -20,7 +20,7 @@ const calculateTokenAmount = (usdcAmount: number, price: number): number => {
 };
 
 // Constants for auto-betting
-const MIN_PROBABILITY_THRESHOLD = 0.45; // Temporarily lowered to test market functionality
+const MIN_PROBABILITY_THRESHOLD = 0.65; // Only bet on >65% probability to avoid 50/50 markets
 const WALLET_PERCENTAGE_TO_BET = 0.10; // 10% of wallet
 const PROXY_WALLET = ENV.PROXY_WALLET;
 
@@ -363,17 +363,27 @@ async function processMarketOutcomes(
   myBalance: number,
   maxBetAmount: number
 ): Promise<void> {
+  console.log(`   🔍 Analyzing market ${marketId} for betting opportunities...`);
+  
+  // Track if we've already placed a bet on this market to avoid hedging
+  let alreadyBetOnThisMarket = false;
+  
   if (marketData.outcomes && Array.isArray(marketData.outcomes) && marketData.outcomes.length > 0) {
     console.log(`   Found ${marketData.outcomes.length} outcomes:`);
     
     for (const outcome of marketData.outcomes) {
+      if (alreadyBetOnThisMarket) {
+        console.log(`   ⏭️ Skipping additional outcomes - already bet on this market`);
+        break;
+      }
+      
       const outcomeId = outcome.tokenId || outcome.token_id || outcome.id;
       const probability = parseFloat(outcome.price || outcome.probability || outcome.value || 0);
       const outcomeName = outcome.value || outcome.name || outcome.title || 'Unknown';
       
       console.log(`   Outcome: ${outcomeName} (${(probability * 100).toFixed(2)}%)`);
       
-      await processOutcome(
+      const betPlaced = await processOutcome(
         clobClient,
         marketId,
         outcomeId,
@@ -383,6 +393,11 @@ async function processMarketOutcomes(
         myBalance,
         maxBetAmount
       );
+      
+      if (betPlaced) {
+        alreadyBetOnThisMarket = true;
+        console.log(`   ✅ Bet placed on ${outcomeName} - skipping remaining outcomes to avoid hedging`);
+      }
     }
   } else {
     console.log(`❌ No standard outcomes found in market data. Looking for alternative formats...`);
@@ -395,6 +410,11 @@ async function processMarketOutcomes(
         console.log(`   Found outcomes in '${propName}' property. Processing ${marketData[propName].length} outcomes:`);
         
         for (const outcome of marketData[propName]) {
+          if (alreadyBetOnThisMarket) {
+            console.log(`   ⏭️ Skipping additional outcomes - already bet on this market`);
+            break;
+          }
+          
           const outcomeId = outcome.token_id;
           const probability = parseFloat(outcome.price || 0);
           
@@ -419,7 +439,7 @@ async function processMarketOutcomes(
           
           console.log(`   Outcome: ${outcomeName} (${(probability * 100).toFixed(2)}%)`);
           
-          await processOutcome(
+          const betPlaced = await processOutcome(
             clobClient,
             marketId,
             outcomeId,
@@ -429,6 +449,11 @@ async function processMarketOutcomes(
             myBalance,
             maxBetAmount
           );
+          
+          if (betPlaced) {
+            alreadyBetOnThisMarket = true;
+            console.log(`   ✅ Bet placed on ${outcomeName} - skipping remaining outcomes to avoid hedging`);
+          }
         }
         
         foundOutcomes = true;
@@ -454,7 +479,7 @@ async function processOutcome(
   marketData: any,
   myBalance: number,
   maxBetAmount: number
-): Promise<void> {
+): Promise<boolean> {
   try {
     // Debug: Show all date-related fields in market data
     console.log(`      🐛 Debug market dates:`);
@@ -471,7 +496,7 @@ async function processOutcome(
       const now = new Date();
       if (gameStart < now) {
         console.log(`   ❌ Market has started/expired (game time: ${gameStart.toISOString()})`);
-        return;
+        return false;
       }
     }
     
@@ -498,7 +523,7 @@ async function processOutcome(
         // Check if market state definitively shows it's closed
         if (marketData.state === 'resolved' || marketData.state === 'closed') {
           console.log(`   ❌ Market state is '${marketData.state}' - skipping`);
-          return;
+          return false;
         } else {
           console.log(`   ⚠️ Market past end date but state is '${marketData.state}' - checking orderbook...`);
           // Continue to check orderbook - if there's active trading, market might still be live
@@ -527,7 +552,7 @@ async function processOutcome(
     } catch (error: any) {
       console.log(`      ❌ Failed to fetch orderbook: ${error.message}`);
       console.log(`      ⚠️ Skipping price analysis for this outcome`);
-      return;
+      return false;
     }
     
     // Calculate best buy (bid) and sell (ask) prices
@@ -558,7 +583,7 @@ async function processOutcome(
     
     if (!hasActiveLiquidity) {
       console.log(`   ❌ No active liquidity in orderbook - market appears closed`);
-      return;
+      return false;
     }
     
     if (!reasonableSpread) {
@@ -577,7 +602,7 @@ async function processOutcome(
         
         if (betAmount < 1) {
           console.log(`   ❌ Bet amount too small (${betAmount} < $1)`);
-          return;
+          return false;
         }
         
         // Place the bet
@@ -593,16 +618,23 @@ async function processOutcome(
         
         if (placedBet) {
           console.log(`   ✅ Successfully placed bet of $${betAmount.toFixed(2)} on ${outcomeName}`);
+          return true; // Bet was successfully placed
         } else {
           console.log(`   ❌ Failed to place bet on ${outcomeName}`);
+          return false;
         }
       } else {
         console.log(`   ❌ Insufficient balance for betting`);
+        return false;
       }
     }
     
+    // No bet was placed (didn't meet criteria)
+    return false;
+    
   } catch (error) {
     console.error(`❌ Error processing outcome ${outcomeId}:`, error);
+    return false;
   }
 }
 
